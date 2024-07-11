@@ -11,14 +11,6 @@ import torch.nn as nn
 import torchvision
 from torchvision import transforms
 
-import pandas as pd
-
-# class_mapping.csvの読み込み
-class_mapping = pd.read_csv('class_mapping.csv')
-answer2idx = {row['answer']: row['class_id'] for _, row in class_mapping.iterrows()}
-idx2answer = {row['class_id']: row['answer'] for _, row in class_mapping.iterrows()}
-
-
 
 def set_seed(seed):
     random.seed(seed)
@@ -79,9 +71,9 @@ class VQADataset(torch.utils.data.Dataset):
 
         # question / answerの辞書を作成
         self.question2idx = {}
-        self.answer2idx = answer2idx
+        self.answer2idx = {}
         self.idx2question = {}
-        self.idx2answer = idx2answer
+        self.idx2answer = {}
 
         # 質問文に含まれる単語を辞書に追加
         for question in self.df["question"]:
@@ -325,8 +317,6 @@ def train(model, dataloader, optimizer, criterion, device):
     total_acc = 0
     simple_acc = 0
 
-    i = 0
-
     start = time.time()
     for image, question, answers, mode_answer in dataloader:
         image, question, answer, mode_answer = \
@@ -342,8 +332,6 @@ def train(model, dataloader, optimizer, criterion, device):
         total_loss += loss.item()
         total_acc += VQA_criterion(pred.argmax(1), answers)  # VQA accuracy
         simple_acc += (pred.argmax(1) == mode_answer).float().mean().item()  # simple accuracy
-        print(f"training", i, '/', len(dataloader))
-        i += 1
 
     return total_loss / len(dataloader), total_acc / len(dataloader), simple_acc / len(dataloader), time.time() - start
 
@@ -371,7 +359,6 @@ def eval(model, dataloader, optimizer, criterion, device):
 
 
 def main():
-    print("start")
     # deviceの設定
     set_seed(42)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -379,13 +366,6 @@ def main():
     # dataloader / model
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(10),
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),
-        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
-        transforms.RandomGrayscale(p=0.1),
-        transforms.RandomPerspective(distortion_scale=0.1, p=0.1),
         transforms.ToTensor()
     ])
     train_dataset = VQADataset(df_path="./data/train.json", image_dir="./data/train", transform=transform)
@@ -395,8 +375,6 @@ def main():
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-    print("dataloader is ready")
-
     model = VQAModel(vocab_size=len(train_dataset.question2idx)+1, n_answer=len(train_dataset.answer2idx)).to(device)
 
     # optimizer / criterion
@@ -404,7 +382,6 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
 
-    print("model is ready")
     # train model
     for epoch in range(num_epoch):
         train_loss, train_acc, train_simple_acc, train_time = train(model, train_loader, optimizer, criterion, device)
@@ -417,14 +394,11 @@ def main():
     # 提出用ファイルの作成
     model.eval()
     submission = []
-    i = 0
     for image, question in test_loader:
         image, question = image.to(device), question.to(device)
         pred = model(image, question)
         pred = pred.argmax(1).cpu().item()
         submission.append(pred)
-        print(f"preding", i, '/', len(test_loader))
-        i += 1
 
     submission = [train_dataset.idx2answer[id] for id in submission]
     submission = np.array(submission)
